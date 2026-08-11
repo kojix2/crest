@@ -1,16 +1,16 @@
-# <img src="https://stars.medv.io/mamantoha/crest.svg" align="right"/>
+# <a href="https://github.com/mamantoha/crest"><img src="https://starlines.qoo.monster/assets/mamantoha/crest" align="right"/></a>
+
 <p align="left"><img src="https://raw.githubusercontent.com/mamantoha/crest/master/logo/logotype_horizontal_dark.png" alt="crest" height="150px"></p>
 
-[![Codacy Badge](https://api.codacy.com/project/badge/Grade/16e439ef2706472988306ef13da91a51)](https://app.codacy.com/app/mamantoha/crest?utm_source=github.com&utm_medium=referral&utm_content=mamantoha/crest&utm_campaign=Badge_Grade_Dashboard)
 ![Crystal CI](https://github.com/mamantoha/crest/workflows/Crystal%20CI/badge.svg)
 [![GitHub release](https://img.shields.io/github/release/mamantoha/crest.svg)](https://github.com/mamantoha/crest/releases)
 [![Commits Since Last Release](https://img.shields.io/github/commits-since/mamantoha/crest/latest.svg)](https://github.com/mamantoha/crest/pulse)
 [![Docs](https://img.shields.io/badge/docs-available-brightgreen.svg)](https://mamantoha.github.io/crest/)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mamantoha/crest)
 [![License](https://img.shields.io/github/license/mamantoha/crest.svg)](https://github.com/mamantoha/crest/blob/master/LICENSE)
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-4-orange.svg?style=flat-square)](#contributors-)
+[![All Contributors](https://img.shields.io/badge/all_contributors-5-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
-
 
 [![Visitors](https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2Fmamantoha%2Fcrest&countColor=%23263759&style=plastic)](https://visitorbadge.io/status?path=https%3A%2F%2Fgithub.com%2Fmamantoha%2Fcrest)
 
@@ -90,6 +90,7 @@ Optional parameters:
 - `:form` - a hash containing form data (or a raw string or IO or Bytes)
 - `:headers` - a hash containing the request headers
 - `:cookies` - a hash containing the request cookies
+- `:cookie_jar` - an optional `HTTP::CookieJar` used to persist cookies across requests
 - `:params` - a hash that represent query params (or a raw string) - a string separated from the preceding part by a question mark (`?`) and a sequence of attribute–value pairs separated by a delimiter (`&`)
 - `:params_encoder` params encoder (default to `Crest::FlatParamsEncoder`)
 - `:auth` - access authentication method `basic` or `digest` (default to `basic`)
@@ -98,6 +99,7 @@ Optional parameters:
 - `:p_addr`, `:p_port`, `:p_user`, and `:p_pass` - specify a per-request proxy by passing these parameters
 - `:json` - make a JSON request with the appropriate HTTP headers (default to `false`)
 - `:multipart` make a multipart request with the appropriate HTTP headers even if not sending a file (default to `false`)
+- `:stream_multipart` - stream multipart request body to reduce memory usage (default to `false`)
 - `:user_agent` - set "User-Agent" HTTP header (default to `Crest::USER_AGENT`)
 - `:max_redirects` - maximum number of redirects (default to 10)
 - `:logging` - enable logging (default to `false`)
@@ -193,6 +195,30 @@ resource["/post"].post(
   params: {:secret => "secret"}
 )
 ```
+
+`Crest::Resource` can also share a cookie jar across requests:
+
+```crystal
+jar = HTTP::CookieJar.new
+
+resource = Crest::Resource.new(
+  "https://example.com",
+  cookie_jar: jar
+)
+
+resource.post(
+  "/login",
+  form: {
+    "email"    => "user@example.com",
+    "password" => "secret",
+  }
+)
+
+response = resource["/dashboard"].get
+```
+
+This is useful for login flows where the server returns `Set-Cookie` headers
+that should be reused by later requests.
 
 Use the `[]` syntax to allocate subresources:
 
@@ -403,7 +429,18 @@ This section covers some of `crest` more advanced features.
 
 #### Multipart
 
-Yeah, that's right! This does multipart sends for you!
+Use multipart when an endpoint expects `multipart/form-data`.
+
+Crest automatically uses multipart when your `form` includes an `IO` (for example `File` or `IO::Memory`).
+You can also force multipart for text-only forms with `multipart: true`.
+
+By default, multipart is buffered in memory before sending. For large uploads, enable
+`stream_multipart: true` to stream the request body and reduce memory usage.
+
+Use cases:
+
+- Small/medium uploads and maximum compatibility: default multipart
+- Large files or many concurrent uploads: `stream_multipart: true`
 
 ```crystal
 file = File.open("#{__DIR__}/example.png")
@@ -417,8 +454,31 @@ Crest.post("http://httpbin.org/post", {"data.csv" => file})
 ```
 
 ```crystal
+# Force multipart even without file fields
+Crest.post(
+  "http://httpbin.org/post",
+  {:name => "john", :role => "admin"},
+  multipart: true
+)
+```
+
+```crystal
+# Stream multipart upload to avoid buffering full body in memory
+file = File.open("#{__DIR__}/large.iso")
+Crest.post(
+  "http://httpbin.org/post",
+  {:image => file},
+  stream_multipart: true
+)
+```
+
+```crystal
+# Resource-level default for repeated uploads
 file = File.open("#{__DIR__}/example.png")
-resource = Crest::Resource.new("https://httpbin.org")
+resource = Crest::Resource.new(
+  "https://httpbin.org",
+  stream_multipart: true
+)
 response = resource["/post"].post({:image => file})
 ```
 
@@ -548,26 +608,32 @@ Crest.get("http://httpbin.org/get", logging: true)
 ##### Filter sensitive information from logs with a regex matcher
 
 ```crystal
-resource = Crest::Request.get("http://httpbin.org/get", params: {api_key => "secret"}, logging: true) do |request|
-  request.logger.filter(/(api_key=)(\w+)/, "\\1[REMOVED]")
+resource = Crest::Request.get("http://httpbin.org/get", params: {"access_token" => "secret"}, logging: true) do |request|
+  request.logger.filter(/(access_token=)([^&]+)/, "\\1[REMOVED]")
 end
 
-# => crest | 2018-07-04 14:49:49 | GET | http://httpbin.org/get?api_key=[REMOVED]
+# => crest | 2018-07-04 14:49:49 | GET | http://httpbin.org/get?access_token=[REMOVED]
 ```
 
 ##### Customize logger
 
 You can create the custom logger by integration `Crest::Logger` abstract class.
 Here has two methods must be implement: `Crest::Logger.request` and `Crest::Logger.response`.
+Log messages through `info(...)`, because filters are applied by `Crest::Logger#info`.
 
 ```crystal
 class MyLogger < Crest::Logger
+  def initialize(io : IO = STDOUT)
+    super
+    filter(/(access_token=)([^&]+)/, "\\1[REMOVED]")
+  end
+
   def request(request)
-    @logger.info { ">> | %s | %s" % [request.method, request.url] }
+    info(">> | %s | %s" % [request.method, request.url])
   end
 
   def response(response)
-    @logger.info { "<< | %s | %s" % [response.status_code, response.url] }
+    info("<< | %s | %s" % [response.status_code, response.url])
   end
 end
 
@@ -703,6 +769,7 @@ Then select the Workbook -> Requests from the menu.
       <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/chao-yang-r/"><img src="https://avatars.githubusercontent.com/u/15083254?v=4?s=100" width="100px;" alt="Chao Yang"/><br /><sub><b>Chao Yang</b></sub></a><br /><a href="https://github.com/mamantoha/crest/commits?author=cyangle" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/psikoz"><img src="https://avatars.githubusercontent.com/u/40601249?v=4?s=100" width="100px;" alt="psikoz"/><br /><sub><b>psikoz</b></sub></a><br /><a href="#design-psikoz" title="Design">🎨</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/jphaward"><img src="https://avatars.githubusercontent.com/u/52081790?v=4?s=100" width="100px;" alt="jphaward"/><br /><sub><b>jphaward</b></sub></a><br /><a href="https://github.com/mamantoha/crest/commits?author=jphaward" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://miry.codeberg.page/"><img src="https://avatars.githubusercontent.com/u/21104?v=4?s=100" width="100px;" alt="Michael Nikitochkin"/><br /><sub><b>Michael Nikitochkin</b></sub></a><br /><a href="https://github.com/mamantoha/crest/commits?author=miry" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
@@ -721,6 +788,6 @@ Then select the Workbook -> Requests from the menu.
 
 ## License
 
-Copyright: 2017-2024 Anton Maminov (anton.maminov@gmail.com)
+Copyright: 2017-2026 Anton Maminov (anton.maminov@gmail.com)
 
 This library is distributed under the MIT license. Please see the LICENSE file.

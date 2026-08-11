@@ -17,7 +17,7 @@ describe Crest do
         ex.response
       end
 
-      response.body.should eq("500 error")
+      response.body.chomp.should eq("500 Internal Server Error")
     end
 
     it "404 with Resource" do
@@ -44,6 +44,17 @@ describe Crest do
       expect_raises Crest::InternalServerError, "HTTP status code 500" do
         Crest.get("#{TEST_SERVER_URL}/500")
       end
+    end
+
+    it "Unsupported HTTP status code 456" do
+      response = begin
+        Crest.get("#{TEST_SERVER_URL}/status/456")
+      rescue ex : Crest::RequestFailed
+        ex.response
+      end
+
+      response.status_code.should eq(456)
+      response.body.chomp.should eq("456 ")
     end
 
     it "call .response on the exception to get the server's response" do

@@ -59,7 +59,7 @@ module Crest
       filename_regex = /filename\*?=['"]?(?:UTF-\d['"]*)?([^;\r\n"']*)['"]?;?/xi
 
       if match_data = http_client_res.headers.fetch("Content-Disposition", "").match(filename_regex)
-        return match_data[1]
+        match_data[1]
       end
     end
 
@@ -77,11 +77,7 @@ module Crest
     end
 
     def to_s(io : IO) : Nil
-      {% if compare_versions(Crystal::VERSION, "1.1.1") > 0 %}
-        io.write_string(body.to_slice)
-      {% else %}
-        io.write_utf8(body.to_slice)
-      {% end %}
+      io.write_string(body.to_slice)
     end
 
     def inspect
@@ -93,7 +89,16 @@ module Crest
     end
 
     private def request_cookies
-      cookies_to_h(@request.cookies)
+      sent_cookies = cookies_to_h(HTTP::Cookies.from_client_headers(@request.http_request.headers))
+
+      return sent_cookies unless sent_cookies.empty?
+
+      cookies = @request.cookie_jar.try do |cookie_jar|
+        cookies_to_h(cookie_jar.cookies_for(@request.url))
+      end || {} of String => String
+
+      cookies.merge!(cookies_to_h(@request.redirect_cookie_jar.cookies_for(@request.url)))
+      cookies.merge!(cookies_to_h(@request.cookies))
     end
 
     private def response_cookies
@@ -112,11 +117,7 @@ module Crest
     end
 
     private def cookies_to_h(cookies : HTTP::Cookies)
-      {% if compare_versions(Crystal::VERSION, "1.1.1") > 0 %}
-        cookies.to_h.map { |e| [e[1].name.to_s, URI.encode_path(e[1].value)] }.to_h
-      {% else %}
-        cookies.to_h.map { |e| [e[1].name.to_s, URI.encode(e[1].value)] }.to_h
-      {% end %}
+      cookies.to_h.map { |e| [e[1].name.to_s, URI.encode_path(e[1].value)] }.to_h
     end
 
     private def body_truncated(size)

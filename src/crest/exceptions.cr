@@ -95,14 +95,11 @@ module Crest
   class RequestFailed < Exception
     getter response
 
-    @response : Crest::Response
-
     def self.subclass_by_status_code(status_code)
       EXCEPTIONS_MAP.fetch(status_code, self)
     end
 
-    def initialize(response)
-      @response = response
+    def initialize(@response : Crest::Response)
     end
 
     def http_code
@@ -110,7 +107,11 @@ module Crest
     end
 
     def message
-      "HTTP status code #{http_code}: #{STATUSES[http_code]}"
+      result = "HTTP status code #{http_code}"
+      if msg = STATUSES[http_code]?
+        result += ": #{msg}"
+      end
+      result
     end
   end
 
@@ -118,9 +119,9 @@ module Crest
 
   {% for code, status in STATUSES %}
     # :nodoc:
-    class {{status.gsub(/\W/, "").id}} < RequestFailed
+    class {{ status.gsub(/\W/, "").id }} < RequestFailed
     end
 
-    EXCEPTIONS_MAP[{{code.id}}] = Crest::{{status.gsub(/\W/, "").id}}
+    EXCEPTIONS_MAP[{{ code.id }}] = Crest::{{ status.gsub(/\W/, "").id }}
   {% end %}
 end

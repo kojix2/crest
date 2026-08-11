@@ -34,6 +34,15 @@ describe Crest::Response do
     body["path"].should eq("/get")
   end
 
+  it "do GET request with nested path" do
+    resource = Crest::Resource.new("#{TEST_SERVER_URL}/foo")
+    response = resource.get("bar")
+
+    body = JSON.parse(response.body)
+
+    body["path"].should eq("/foo/bar")
+  end
+
   it "do GET request with []" do
     site = Crest::Resource.new("#{TEST_SERVER_URL}")
     response = site["/get"].get
@@ -116,6 +125,21 @@ describe Crest::Response do
     body["args"].should eq({"width" => "100", "height" => "100"})
   end
 
+  it "does not leak per-request headers and params between calls" do
+    resource = Crest::Resource.new(TEST_SERVER_URL)
+
+    first_response = resource.get("/get", headers: {"X-Trace" => "1"}, params: {"width" => "100"})
+    second_response = resource.get("/get")
+
+    first_body = JSON.parse(first_response.body)
+    second_body = JSON.parse(second_response.body)
+
+    first_body["args"].should eq({"width" => "100"})
+    first_body["headers"].as_h["X-Trace"].should eq("1")
+    second_body["args"].should eq({} of String => String)
+    second_body["headers"].as_h["X-Trace"]?.should be_nil
+  end
+
   it "do GET request with suburl and default nested params" do
     resource = Crest::Resource.new(
       TEST_SERVER_URL,
@@ -169,6 +193,28 @@ describe Crest::Response do
 
     (response.status_code).should eq(200)
     (response.cookies).should eq({"k1" => "v1", "k2" => "vv2"})
+  end
+
+  it "uses cookie jar across resource requests and subresources" do
+    jar = HTTP::CookieJar.new
+    resource = Crest::Resource.new(TEST_SERVER_URL, cookie_jar: jar)
+
+    set_response = resource.get("/cookies/set", params: {"k1" => "v1"})
+    set_response.status_code.should eq(200)
+    jar.cookies_for("#{TEST_SERVER_URL}/cookies").to_h["k1"].value.should eq("v1")
+
+    echo_response = resource["/cookies"].get
+    JSON.parse(echo_response.body)["cookies"].should eq({"k1" => "v1"})
+  end
+
+  it "does not leak per-request cookies between calls" do
+    resource = Crest::Resource.new(TEST_SERVER_URL)
+
+    first_response = resource["/"].get(cookies: {"k1" => "v1"})
+    second_response = resource["/"].get
+
+    first_response.cookies.should eq({"k1" => "v1"})
+    second_response.cookies.should eq({} of String => String)
   end
 
   it "should accept block" do
@@ -398,7 +444,7 @@ describe Crest::Response do
 
   context "read_timeout" do
     it "sets read timeout" do
-      resource = Crest::Resource.new(TEST_SERVER_URL, read_timeout: 1)
+      resource = Crest::Resource.new(TEST_SERVER_URL, read_timeout: 1.seconds)
 
       expect_raises IO::TimeoutError do
         resource["/delay/2"].get

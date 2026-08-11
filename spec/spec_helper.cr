@@ -3,30 +3,24 @@ require "json"
 require "http_proxy"
 require "vcr"
 require "../src/crest"
+require "./support/constants"
 require "./support/server"
 
-TEST_SERVER_HOST = "0.0.0.0"
-TEST_SERVER_PORT = 4567
-TEST_SERVER_URL  = "http://#{TEST_SERVER_HOST}:#{TEST_SERVER_PORT}"
-
-kemal_config = Kemal.config
-kemal_config.env = "development"
-kemal_config.logging = false
-
-spawn do
-  Kemal.run(port: TEST_SERVER_PORT)
-end
-
-until Kemal.config.running
-  sleep 1.millisecond
-end
-
-def with_proxy_server(host = "127.0.0.1", port = 8080, &)
+def with_proxy_server(host = PROXY_SERVER_HOST, port = 0, &)
   wants_close = Channel(Nil).new
+  started = Channel(Socket::IPAddress | Exception).new(1)
   server = HTTP::Proxy::Server.new
 
   spawn do
-    server.bind_tcp(host, port)
+    address =
+      begin
+        server.bind_tcp(host, port)
+      rescue ex
+        started.send(ex)
+        next
+      end
+
+    started.send(address)
     server.listen
   end
 
@@ -35,7 +29,8 @@ def with_proxy_server(host = "127.0.0.1", port = 8080, &)
     server.close
   end
 
-  Fiber.yield
+  address = started.receive
+  raise address if address.is_a?(Exception)
 
-  yield host, port, wants_close
+  yield host, address.port, wants_close
 end

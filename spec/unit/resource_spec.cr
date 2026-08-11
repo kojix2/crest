@@ -19,7 +19,7 @@ describe Crest::Resource do
     it "initialize new resource with logger" do
       resource = Crest::Resource.new("http://localhost", logging: true)
 
-      (resource.logging).should eq(true)
+      (resource.logging).should be_true
       (resource.logger).should be_a(Crest::Logger)
     end
 
@@ -36,6 +36,7 @@ describe Crest::Resource do
 
       resource.url.should eq("http://localhost/resource")
       resource.headers.should eq({"X-Something" => "1"})
+      site.url.should eq("http://localhost")
     end
 
     it "initialize new resource with params" do
@@ -43,6 +44,31 @@ describe Crest::Resource do
 
       resource.url.should eq("http://localhost")
       resource.params.should eq({"foo" => "123", "bar" => "456"})
+    end
+
+    it "initialize new resource with cookie jar" do
+      jar = HTTP::CookieJar.new
+      resource = Crest::Resource.new("http://localhost", cookie_jar: jar)
+
+      resource.cookie_jar.should be(jar)
+    end
+
+    it "returns independent subresources" do
+      site = Crest::Resource.new("http://localhost", headers: {"X-Something" => "1"})
+      resource = site["/resource"]
+
+      resource.headers["X-Other"] = "2"
+
+      site.headers.should eq({"X-Something" => "1"})
+      resource.headers.should eq({"X-Something" => "1", "X-Other" => "2"})
+    end
+
+    it "preserves cookie jar on subresources" do
+      jar = HTTP::CookieJar.new
+      site = Crest::Resource.new("http://localhost", cookie_jar: jar)
+      resource = site["/resource"]
+
+      resource.cookie_jar.should be(jar)
     end
   end
 end

@@ -129,7 +129,7 @@ describe Crest::Request do
 
   it "sets read_timeout for HTTP::Client" do
     url = "#{TEST_SERVER_URL}/delay/2"
-    request = Crest::Request.new(:get, url, read_timeout: 1)
+    request = Crest::Request.new(:get, url, read_timeout: 1.second)
 
     expect_raises IO::TimeoutError do
       request.execute
@@ -272,6 +272,15 @@ describe Crest::Request do
     (File.read(file_path)).should eq(File.read(file.path))
   end
 
+  it "upload file with streamed multipart form" do
+    file = File.open("#{__DIR__}/../support/fff.png")
+    response = Crest::Request.post("#{TEST_SERVER_URL}/upload", form: {:file => file}, stream_multipart: true)
+    body = response.body
+    (body).should match(/Upload OK/)
+    file_path = body.gsub("Upload OK - ", "")
+    (File.read(file_path)).should eq(File.read(file.path))
+  end
+
   it "upload file directly" do
     file = File.open("#{__DIR__}/../support/fff.png")
     response = Crest::Request.post("#{TEST_SERVER_URL}/upload", form: file, headers: {"Content-Type" => "image/png"})
@@ -283,21 +292,21 @@ describe Crest::Request do
   end
 
   it "upload IO::Memory directly" do
-    file_content = "id,name\n1,test"
+    file_content = "{\"foo\":\"bar\"}"
     file = IO::Memory.new(file_content)
-    response = Crest::Request.post("#{TEST_SERVER_URL}/upload", form: file, headers: {"Content-Type" => "text/csv"})
+    response = Crest::Request.post("#{TEST_SERVER_URL}/upload", form: file, headers: {"Content-Type" => "application/json"})
     body = response.body
     (body).should match(/Upload OK/)
     file_path = body.gsub("Upload OK - ", "")
-    (file_path.ends_with?(".csv")).should be_true
+    (file_path.ends_with?(".json")).should be_true
     (File.read(file_path)).should eq(file_content)
   end
 
   it "upload IO::Memory as form hash value" do
-    file_content = "id,name\n1,test"
+    file_content = "{\"foo\":\"bar\"}"
     file = IO::Memory.new(file_content)
-    request = Crest::Request.new(:POST, "#{TEST_SERVER_URL}/upload", form: {"file.csv" => file})
-    (request.form_data.to_s).should contain("Content-Type: text/csv")
+    request = Crest::Request.new(:POST, "#{TEST_SERVER_URL}/upload", form: {"file.json" => file})
+    (request.form_data.to_s).should contain("Content-Type: application/json")
     response = request.execute
     body = response.body
     (body).should match(/Upload OK/)
@@ -306,13 +315,13 @@ describe Crest::Request do
   end
 
   it "upload Bytes directly" do
-    file_content = "id,name\n1,test"
+    file_content = "{\"foo\":\"bar\"}"
     file = file_content.to_slice
-    response = Crest::Request.post("#{TEST_SERVER_URL}/upload", form: file, headers: {"Content-Type" => "text/csv"})
+    response = Crest::Request.post("#{TEST_SERVER_URL}/upload", form: file, headers: {"Content-Type" => "application/json"})
     body = response.body
     (body).should match(/Upload OK/)
     file_path = body.gsub("Upload OK - ", "")
-    (file_path.ends_with?(".csv")).should be_true
+    (file_path.ends_with?(".json")).should be_true
     (File.read(file_path)).should eq(file_content)
   end
 

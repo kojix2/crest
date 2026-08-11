@@ -2,6 +2,62 @@
 
 ## [...]
 
+- Preserve caller-supplied `Cookie` headers and give them precedence over configured cookies [#254](https://github.com/mamantoha/crest/pull/254)
+- Rebuild cookies for each redirect destination to prevent cross-host, path, and secure-cookie leaks [#253](https://github.com/mamantoha/crest/pull/253)
+- Shell-quote every argument in generated cURL commands [#252](https://github.com/mamantoha/crest/pull/252)
+- Avoid globally extending `IO` for JSON serialization and raise a clear error when an `IO` value is used in a JSON form [#251](https://github.com/mamantoha/crest/pull/251)
+
+## [1.8.1][] (2026-06-25)
+
+- Decode `+` as a space in query parameter keys and values [#250](https://github.com/mamantoha/crest/pull/250)
+- Decode bare query parameters without values as `nil` [#249](https://github.com/mamantoha/crest/pull/249)
+- Preserve streamed multipart request bodies across `307` and `308` redirects [#248](https://github.com/mamantoha/crest/pull/248)
+
+## [1.8.0][] (2026-05-26)
+
+- Add opt-in `stream_multipart` multipart uploads for `Crest::Request` and `Crest::Resource` (via `Crest::StreamDataForm`) [#246](https://github.com/mamantoha/crest/pull/246)
+
+## [1.7.0][] (2026-03-08)
+
+- Prevent `Crest::Resource` from leaking per-request URL, headers, params, and cookies across calls in [#243](https://github.com/mamantoha/crest/pull/243)
+- Preserve HTTP method and request body for `307` and `308` redirects in [#244](https://github.com/mamantoha/crest/pull/244)
+- Preserve request settings such as auth, params encoder, multipart mode, user agent, TLS, proxy, and timeouts across redirects
+- Do not forward authentication credentials on cross-origin redirects
+- Rewrite redirected non-GET requests for `301` and `302` with explicit method-preservation rules
+- Resolve relative `Location` headers against the current request URI during redirects
+- Raise the minimum Crystal version to `1.2.0` and remove obsolete compatibility checks
+- Integrate the external `cookie_jar` shard and add `HTTP::CookieJar` support to `Crest::Request` and `Crest::Resource` in [#245](https://github.com/mamantoha/crest/pull/245)
+
+## [1.6.2][] (2026-02-12)
+
+- Handle unknown HTTP status code by @miry in [#240](https://github.com/mamantoha/crest/pull/240)
+
+## [1.6.1][] (2026-02-05)
+
+- Require [http_proxy](https://github.com/mamantoha/http_proxy) shard >= 0.14.0
+
+## [1.6.0][] (2025-12-25)
+
+ - Replace `options`-hash initializers with explicit typed keyword arguments in `Crest::Request` and `Crest::Resource` [#238](https://github.com/mamantoha/crest/pull/238)
+
+## [1.5.1][] (2025-02-25)
+
+- Support Crystal 1.16.0-dev [#233](https://github.com/mamantoha/crest/pull/233)
+
+## [1.5.0][] (2025-01-27)
+
+- **(breaking-change)** Refactor timeout ivars to `Time::Span` [#232](https://github.com/mamantoha/crest/pull/232)
+
+## [1.4.1][] (2024-08-29)
+
+- Fix Crest::Resource#concat_urls [#229](https://github.com/mamantoha/crest/pull/229)
+
+## [1.4.0][] (2024-08-26)
+
+- Fix typo in README.md by @kojix2 in [#223](https://github.com/mamantoha/crest/pull/223)
+- Fix to changes in `HTTP::Client` by @mamantoha in [#224](https://github.com/mamantoha/crest/pull/224)
+- Rewrite specs without Kemal and enable Windows CI @mamantoha in [#226](https://github.com/mamantoha/crest/pull/226)
+
 ## [1.3.13][] (2024-03-21)
 
 - Use `http_proxy` >= 0.10.2
@@ -411,7 +467,17 @@
 
 - First release :tada:
 
-[...]: https://github.com/mamantoha/crest/compare/v1.3.13...HEAD
+[...]: https://github.com/mamantoha/crest/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/mamantoha/crest/compare/v1.8.0...v1.8.1
+[1.8.0]: https://github.com/mamantoha/crest/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/mamantoha/crest/compare/v1.6.2...v1.7.0
+[1.6.2]: https://github.com/mamantoha/crest/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/mamantoha/crest/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/mamantoha/crest/compare/v1.5.1...v1.6.0
+[1.5.1]: https://github.com/mamantoha/crest/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/mamantoha/crest/compare/v1.4.1...v1.5.0
+[1.4.1]: https://github.com/mamantoha/crest/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/mamantoha/crest/compare/v1.3.13...v1.4.0
 [1.3.13]: https://github.com/mamantoha/crest/compare/v1.3.12...v1.3.13
 [1.3.12]: https://github.com/mamantoha/crest/compare/v1.3.11...v1.3.12
 [1.3.11]: https://github.com/mamantoha/crest/compare/v1.3.10...v1.3.11

@@ -44,6 +44,7 @@ module Crest
   # - `p_addr`, `p_port`, `p_user`, `p_pass` for proxy
   # - `json` make a JSON request with the appropriate HTTP headers (default to `false`)
   # - `multipart` make a multipart request with the appropriate HTTP headers even if not sending a file (default to `false`)
+  # - `stream_multipart` stream multipart request body to reduce memory usage (default to `false`)
   # - `user_agent` set "User-Agent" HTTP header (default to `Crest::USER_AGENT`)
   # - `max_redirects` maximum number of redirects (default to `10`)
   # - `logging` enable logging (default to `false`)
@@ -62,7 +63,7 @@ module Crest
     @http_request : HTTP::Request
     @headers : HTTP::Headers
     @cookies : HTTP::Cookies
-    @form_data : String | Bytes | IO | Nil
+    @form_data : String | Bytes | IO?
     @max_redirects : Int32
     @auth : String
     @user : String?
@@ -74,19 +75,26 @@ module Crest
     @p_pass : String?
     @json : Bool
     @multipart : Bool
+    @stream_multipart : Bool
     @user_agent : String?
     @logger : Crest::Logger
     @logging : Bool
     @handle_errors : Bool
     @close_connection : Bool
-    @read_timeout : Crest::TimeoutValue?
-    @write_timeout : Crest::TimeoutValue?
-    @connect_timeout : Crest::TimeoutValue?
+    @read_timeout : Time::Span?
+    @write_timeout : Time::Span?
+    @connect_timeout : Time::Span?
+    @cookie_jar : HTTP::CookieJar?
+    @redirect_cookie_jar : HTTP::CookieJar
+    @generated_cookie_header : String?
+    @stream_multipart_params : Array(Tuple(String, Crest::ParamsValue))?
 
     getter http_client, http_request, method, url, tls, form_data, headers, cookies,
       max_redirects, logging, logger, handle_errors, close_connection,
       auth, proxy, p_addr, p_port, p_user, p_pass, json, multipart, user_agent,
-      read_timeout, write_timeout, connect_timeout
+      stream_multipart,
+      read_timeout, write_timeout, connect_timeout, params_encoder, cookie_jar,
+      redirect_cookie_jar
 
     property redirection_history, user, password
 
@@ -104,24 +112,41 @@ module Crest
 
     def initialize(
       method : Symbol,
-      url : String,
+      @url : String,
       form = {} of String => String,
       *,
       headers = {} of String => String,
       cookies = {} of String => String,
+      @cookie_jar : HTTP::CookieJar? = nil,
+      @redirect_cookie_jar : HTTP::CookieJar = HTTP::CookieJar.new,
       params = {} of String => String,
-      max_redirects = 10,
-      **options,
+      @max_redirects : Int32 = 10,
+      @params_encoder : Crest::ParamsEncoder.class = Crest::FlatParamsEncoder,
+      @user_agent : String? = nil,
+      @json : Bool = false,
+      @multipart : Bool = false,
+      @stream_multipart : Bool = false,
+      @tls : OpenSSL::SSL::Context::Client? = nil,
+      http_client : HTTP::Client? = nil,
+      @auth : String = "basic",
+      @user : String? = nil,
+      @password : String? = nil,
+      @p_addr : String? = nil,
+      @p_port : Int32? = nil,
+      @p_user : String? = nil,
+      @p_pass : String? = nil,
+      @logger : Crest::Logger = Crest::CommonLogger.new,
+      @logging : Bool = false,
+      @handle_errors : Bool = true,
+      @close_connection : Bool = true,
+      @read_timeout : Time::Span? = nil,
+      @write_timeout : Time::Span? = nil,
+      @connect_timeout : Time::Span? = nil,
       &
     )
       @method = parse_verb(method)
-      @url = url
       @headers = HTTP::Headers.new
       @cookies = HTTP::Cookies.new
-      @json = options.fetch(:json, false).as(Bool)
-      @multipart = options.fetch(:multipart, false).as(Bool)
-      @params_encoder = options.fetch(:params_encoder, Crest::FlatParamsEncoder).as(Crest::ParamsEncoder.class)
-      @user_agent = options.fetch(:user_agent, nil).as(String | Nil)
       @redirection_history = [] of Crest::Response
 
       set_headers!(headers)
@@ -132,31 +157,17 @@ module Crest
         @url = url + process_url_params(params)
       end
 
-      @max_redirects = max_redirects
+      @http_client = http_client || new_http_client
 
-      @tls = options.fetch(:tls, nil).as(OpenSSL::SSL::Context::Client | Nil)
-      @http_client = options.fetch(:http_client, new_http_client).as(HTTP::Client)
-      @auth = options.fetch(:auth, "basic").as(String)
-      @user = options.fetch(:user, nil).as(String | Nil)
-      @password = options.fetch(:password, nil).as(String | Nil)
-      @p_addr = options.fetch(:p_addr, nil).as(String | Nil)
-      @p_port = options.fetch(:p_port, nil).as(Int32 | Nil)
-      @p_user = options.fetch(:p_user, nil).as(String | Nil)
-      @p_pass = options.fetch(:p_pass, nil).as(String | Nil)
-      @logger = options.fetch(:logger, Crest::CommonLogger.new).as(Crest::Logger)
-      @logging = options.fetch(:logging, false).as(Bool)
-      @handle_errors = options.fetch(:handle_errors, true).as(Bool)
-      @close_connection = options.fetch(:close_connection, true).as(Bool)
-      @read_timeout = options.fetch(:read_timeout, nil).as(Crest::TimeoutValue?)
-      @write_timeout = options.fetch(:write_timeout, nil).as(TimeoutValue?)
-      @connect_timeout = options.fetch(:connect_timeout, nil).as(TimeoutValue?)
-
-      @http_request = HTTP::Request.new(@method, @url, body: @form_data, headers: @headers)
+      @http_request = new_http_request(@method, @url, @headers, @form_data)
 
       set_proxy!(@p_addr, @p_port, @p_user, @p_pass)
       set_timeouts!
 
       yield self
+
+      add_request_cookies_to_redirect_jar
+      add_request_cookie_header
     end
 
     # When block is not given.
@@ -165,28 +176,28 @@ module Crest
     end
 
     {% for method in Crest::HTTP_METHODS %}
-      # Execute a {{method.id.upcase}} request and and yields the `Crest::Response` to the block.
+      # Execute a {{ method.id.upcase }} request and and yields the `Crest::Response` to the block.
       #
       # ```
-      # Crest::Request.{{method.id}}("http://httpbin.org/{{method.id}}") do |resp|
+      # Crest::Request.{{ method.id }}("http://httpbin.org/{{ method.id }}") do |resp|
       #   while line = resp.body_io.gets
       #     puts line
       #   end
       # end
       # ```
-      def self.{{method.id}}(url : String, form = {} of String => String, **args, &block : Crest::Response ->) : Nil
-        request = Request.new(:{{method.id}}, url, form, **args)
+      def self.{{ method.id }}(url : String, form = {} of String => String, **args, &block : Crest::Response ->) : Nil
+        request = Request.new(:{{ method.id }}, url, form, **args)
 
         response = request.execute(&block)
       end
 
-      # Execute a {{method.id.upcase}} request and returns a `Crest::Response`.
+      # Execute a {{ method.id.upcase }} request and returns a `Crest::Response`.
       #
       # ```
-      # Crest::Request.{{method.id}}("http://httpbin.org/{{method.id}}")
+      # Crest::Request.{{ method.id }}("http://httpbin.org/{{ method.id }}")
       # ```
-      def self.{{method.id}}(url : String, form = {} of String => String, **args) : Crest::Response
-        request = Request.new(:{{method.id}}, url, form, **args)
+      def self.{{ method.id }}(url : String, form = {} of String => String, **args) : Crest::Response
+        request = Request.new(:{{ method.id }}, url, form, **args)
 
         request.execute
       end
@@ -198,7 +209,7 @@ module Crest
       authenticate!
       @logger.request(self) if @logging
 
-      @http_request = new_http_request(@method, @url, @headers, @form_data)
+      @http_request = new_http_request(@method, @url, request_headers, @form_data)
 
       http_response = @http_client.exec(@http_request)
 
@@ -213,7 +224,7 @@ module Crest
       authenticate!
       @logger.request(self) if @logging
 
-      @http_request = new_http_request(@method, @url, @headers, @form_data)
+      @http_request = new_http_request(@method, @url, request_headers, @form_data)
 
       @http_client.exec(@http_request) do |http_response|
         response = process_result(http_response, &block)
@@ -231,12 +242,16 @@ module Crest
     end
 
     private def process_result(http_client_res) : Crest::Response
+      @redirect_cookie_jar.extract(http_client_res.headers, @url)
+      @cookie_jar.try &.extract(http_client_res.headers, @url)
       response = Response.new(http_client_res, self)
       logger.response(response) if logging
       response.return!
     end
 
     private def process_result(http_client_res, &block : Crest::Response ->)
+      @redirect_cookie_jar.extract(http_client_res.headers, @url)
+      @cookie_jar.try &.extract(http_client_res.headers, @url)
       response = Response.new(http_client_res, self)
       logger.response(response) if logging
       response.return!(&block)
@@ -259,9 +274,9 @@ module Crest
     end
 
     private def new_http_request(method, url, headers, body) : HTTP::Request
-      request_target = URI.parse(url).request_target
+      resource = URI.parse(url).request_target
 
-      HTTP::Request.new(method, request_target, headers, body).tap do |request|
+      HTTP::Request.new(method, resource, headers, body).tap do |request|
         # Set default headers
         request.headers["Accept"] ||= @json ? "application/json" : "*/*"
         request.headers["Host"] ||= host_header
@@ -302,23 +317,49 @@ module Crest
       if @json
         Crest::JSONForm
       elsif multipart?(form)
-        Crest::DataForm
+        @stream_multipart ? Crest::StreamDataForm : Crest::DataForm
       else
         Crest::UrlencodedForm
       end
     end
 
-    private def generate_form_data!(form : Hash) : String | Bytes | IO | Nil
+    private def generate_form_data!(form : Hash) : String | Bytes | IO?
       return if form.empty?
 
-      generated_form = form_class(form).generate(form, @params_encoder)
+      generated_form =
+        if @stream_multipart && multipart?(form)
+          stream_multipart_params = @params_encoder.flatten_params(form)
+          @stream_multipart_params = stream_multipart_params
+          Crest::StreamDataForm.generate(stream_multipart_params, @params_encoder)
+        else
+          form_class(form).generate(form, @params_encoder)
+        end
 
       @headers["Content-Type"] = generated_form.content_type
       @form_data = generated_form.form_data
     end
 
-    private def generate_form_data!(form : String | Bytes | IO) : String | Bytes | IO | Nil
+    private def generate_form_data!(form : String | Bytes | IO) : String | Bytes | IO?
       @form_data = form
+    end
+
+    protected def form_data_for_redirect
+      stream_multipart_params = @stream_multipart_params
+      return @form_data unless stream_multipart_params
+
+      rewind_stream_multipart_params
+      generated_form = Crest::StreamDataForm.generate(stream_multipart_params, @params_encoder)
+
+      @headers["Content-Type"] = generated_form.content_type
+      generated_form.form_data
+    end
+
+    private def rewind_stream_multipart_params
+      @stream_multipart_params.try do |params|
+        params.each do |_, value|
+          value.rewind if value.is_a?(IO)
+        end
+      end
     end
 
     private def set_headers!(params) : HTTP::Headers
@@ -331,15 +372,70 @@ module Crest
       @headers
     end
 
-    # Adds "Cookie" headers for the cookies in this collection to the @header instance and returns it
-    private def set_cookies!(cookies) : HTTP::Headers
+    private def set_cookies!(cookies) : Nil
       cookies = @params_encoder.flatten_params(cookies)
 
       cookies.each do |k, v|
         @cookies << HTTP::Cookie.new(k.to_s, v.to_s)
       end
+    end
+
+    private def request_headers : HTTP::Headers
+      headers = @headers.dup
+
+      if cookie_header = headers["Cookie"]?
+        return headers if cookie_header != @generated_cookie_header
+
+        headers.delete("Cookie")
+      end
+
+      request_cookies = HTTP::Cookies.new
+
+      @cookie_jar.try do |cookie_jar|
+        cookie_jar.cookies_for(@url).to_h.each_value do |cookie|
+          request_cookies << cookie
+        end
+      end
+
+      @redirect_cookie_jar.cookies_for(@url).to_h.each_value do |cookie|
+        request_cookies << cookie
+      end
+
+      @cookies.to_h.each_value do |cookie|
+        request_cookies << cookie
+      end
+
+      request_cookies.add_request_headers(headers) unless request_cookies.empty?
+
+      headers
+    end
+
+    private def add_request_cookie_header : Nil
+      return if @headers.has_key?("Cookie")
 
       @cookies.add_request_headers(@headers)
+      @generated_cookie_header = @headers["Cookie"]?
+    end
+
+    private def add_request_cookies_to_redirect_jar : Nil
+      @cookies.each do |cookie|
+        @redirect_cookie_jar.add(
+          @url,
+          HTTP::Cookie.new(
+            cookie.name,
+            cookie.value,
+            path: cookie.path || "/",
+            expires: cookie.expires,
+            domain: cookie.domain,
+            secure: cookie.secure,
+            http_only: cookie.http_only,
+            samesite: cookie.samesite,
+            extension: cookie.extension,
+            max_age: cookie.max_age,
+            creation_time: cookie.creation_time
+          )
+        )
+      end
     end
 
     protected def authenticate!
@@ -355,7 +451,7 @@ module Crest
     private def basic_auth!
       auth = "Basic #{Base64.strict_encode("#{@user}:#{@password}")}"
 
-      @headers.add("Authorization", auth)
+      @headers["Authorization"] = auth
     end
 
     private def digest_auth!
@@ -370,11 +466,11 @@ module Crest
       digest_auth = HTTP::Client::DigestAuth.new
       auth = digest_auth.auth_header(uri, www_authenticate, @method)
 
-      @headers.add("Authorization", auth)
+      @headers["Authorization"] = auth
     end
 
     private def digest_auth_response(uri)
-      @http_client.exec(@method, uri.request_target)
+      @http_client.exec(@method, uri.to_s)
     end
 
     private def set_proxy!(p_addr, p_port, p_user, p_pass)
@@ -384,15 +480,9 @@ module Crest
     end
 
     private def set_timeouts!
-      @read_timeout.try { |timeout| @http_client.read_timeout = timeout_to_time_span(timeout) }
-      @write_timeout.try { |timeout| @http_client.write_timeout = timeout_to_time_span(timeout) }
-      @connect_timeout.try { |timeout| @http_client.connect_timeout = timeout_to_time_span(timeout) }
-    end
-
-    private def timeout_to_time_span(timeout : Crest::TimeoutValue) : Time::Span
-      return timeout if timeout.is_a?(Time::Span)
-
-      timeout.to_time_span
+      @read_timeout.try { |timeout| @http_client.read_timeout = timeout }
+      @write_timeout.try { |timeout| @http_client.write_timeout = timeout }
+      @connect_timeout.try { |timeout| @http_client.connect_timeout = timeout }
     end
 
     # Extract the query parameters and append them to the `url`

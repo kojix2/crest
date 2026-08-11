@@ -15,6 +15,13 @@ describe Crest::ParamsDecoder do
     Crest::ParamsDecoder.decode(query).should eq(params)
   end
 
+  it "decodes params without value as nil" do
+    query = "json&bar=2"
+    params = {"json" => nil, "bar" => "2"}
+
+    Crest::ParamsDecoder.decode(query).should eq(params)
+  end
+
   it "decodes array" do
     query = "a[]=one&a[]=two&a[]=three"
     params = {"a" => ["one", "two", "three"]}
@@ -53,6 +60,20 @@ describe Crest::ParamsDecoder do
   it "decodes escaped string" do
     query = "user%5Blogin%5D=admin"
     params = {"user" => {"login" => "admin"}}
+
+    Crest::ParamsDecoder.decode(query).should eq(params)
+  end
+
+  it "decodes plus signs as spaces" do
+    query = "first+name=John+Doe"
+    params = {"first name" => "John Doe"}
+
+    Crest::ParamsDecoder.decode(query).should eq(params)
+  end
+
+  it "decodes encoded plus signs as plus signs" do
+    query = "equation=a%2Bb"
+    params = {"equation" => "a+b"}
 
     Crest::ParamsDecoder.decode(query).should eq(params)
   end

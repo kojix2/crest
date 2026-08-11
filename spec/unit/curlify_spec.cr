@@ -15,8 +15,28 @@ describe Crest::Curlify do
   it "converts GET request with params" do
     request = Crest::Request.new(:get, "http://httpbin.org/get", params: {"foo" => "bar"})
 
-    result = "curl -X GET http://httpbin.org/get?foo=bar"
+    result = "curl -X GET 'http://httpbin.org/get?foo=bar'"
     curlify(request).should eq(result)
+  end
+
+  it "shell-quotes every command argument" do
+    url = "http://example.test/path;echo?value=$(touch)&quoted='value'"
+    body = "value='; echo injected; #"
+    header = "X-Test: $(echo injected) 'quoted'"
+
+    request = Crest::Request.new(
+      :post,
+      url,
+      form: body,
+      headers: {"X-Test" => "$(echo injected) 'quoted'"}
+    )
+
+    expected_args = ["curl", "-X", "POST", url, "-d", body, "-H", header]
+
+    result = curlify(request)
+
+    result.should eq("curl -X POST 'http://example.test/path;echo?value=$(touch)&quoted='\"'\"'value'\"'\"'' -d 'value='\"'\"'; echo injected; #' -H 'X-Test: $(echo injected) '\"'\"'quoted'\"'\"''")
+    Process.parse_arguments_posix(result).should eq(expected_args)
   end
 
   it "converts a request with basic auth as parameters" do
@@ -48,16 +68,16 @@ describe Crest::Curlify do
   end
 
   it "converts a request with proxy" do
-    request = Crest::Request.new(:get, "http://httpbin.org", p_addr: "127.0.0.1", p_port: 8080)
+    request = Crest::Request.new(:get, "http://httpbin.org", p_addr: PROXY_SERVER_HOST, p_port: PROXY_SERVER_PORT)
 
-    result = "curl -X GET http://httpbin.org --proxy 127.0.0.1:8080"
+    result = "curl -X GET http://httpbin.org --proxy #{PROXY_SERVER_HOST}:#{PROXY_SERVER_PORT}"
     (request.to_curl).should eq(result)
   end
 
   it "converts a request with proxy with authentication" do
-    request = Crest::Request.new(:get, "http://httpbin.org", p_addr: "127.0.0.1", p_port: 8080, p_user: "user", p_pass: "pass")
+    request = Crest::Request.new(:get, "http://httpbin.org", p_addr: PROXY_SERVER_HOST, p_port: PROXY_SERVER_PORT, p_user: "user", p_pass: "pass")
 
-    result = "curl -X GET http://httpbin.org --proxy user:pass@127.0.0.1:8080"
+    result = "curl -X GET http://httpbin.org --proxy user:pass@#{PROXY_SERVER_HOST}:#{PROXY_SERVER_PORT}"
     (request.to_curl).should eq(result)
   end
 
@@ -80,14 +100,15 @@ describe Crest::Curlify do
 
     request = Crest::Request.new(:post, "http://httpbin.org/post", form: {"title" => "New Title", "file" => file})
 
-    result = "curl -X POST http://httpbin.org/post -F 'title=New Title' -F 'file=@#{"#{File.expand_path(file.path)}"}' -H 'Content-Type: multipart/form-data'"
+    file_arg = Process.quote_posix("file=@#{File.expand_path(file.path)}")
+    result = "curl -X POST http://httpbin.org/post -F 'title=New Title' -F #{file_arg} -H 'Content-Type: multipart/form-data'"
     curlify(request).should eq(result)
   end
 
   it "converts POST request with headers" do
     request = Crest::Request.new(:post, "http://httpbin.org/post", form: {"param1" => "value1"}, headers: {"user-agent" => "crest"})
 
-    result = "curl -X POST http://httpbin.org/post -d 'param1=value1' -H 'user-agent: crest' -H 'Content-Type: application/x-www-form-urlencoded'"
+    result = "curl -X POST http://httpbin.org/post -d param1=value1 -H 'user-agent: crest' -H 'Content-Type: application/x-www-form-urlencoded'"
     curlify(request).should eq(result)
   end
 

@@ -26,6 +26,43 @@ describe Crest do
         (response.cookies).should eq({"k1" => "v1", "k2" => "v2"})
       end
 
+      it "sends a caller-supplied Cookie header" do
+        response = Crest::Request.execute(
+          :get,
+          "#{TEST_SERVER_URL}/get",
+          headers: {"Cookie" => "session=header"}
+        )
+
+        (JSON.parse(response.body)["cookies"]).should eq({"session" => "header"})
+        (response.cookies).should eq({"session" => "header"})
+      end
+
+      it "lets a caller-supplied Cookie header override configured cookies" do
+        jar = HTTP::CookieJar.new
+        jar.add(TEST_SERVER_URL, HTTP::Cookie.new("from_jar", "jar"))
+
+        response = Crest::Request.execute(
+          :get,
+          "#{TEST_SERVER_URL}/get",
+          headers: {"Cookie" => "session=header"},
+          cookies: {"explicit" => "cookie"},
+          cookie_jar: jar
+        )
+
+        (JSON.parse(response.body)["cookies"]).should eq({"session" => "header"})
+        (response.cookies).should eq({"session" => "header"})
+      end
+
+      it "does not forward a caller-supplied Cookie header on redirect" do
+        response = Crest::Request.execute(
+          :get,
+          "#{TEST_SERVER_URL}/cookies/set_redirect",
+          headers: {"Cookie" => "session=header"}
+        )
+
+        (JSON.parse(response.body)["cookies"]).should eq({} of String => String)
+      end
+
       it "should access cookies from the server" do
         response = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/cookies/set", params: {"k1" => "v1", "k2" => "v2"})
 
@@ -42,6 +79,70 @@ describe Crest do
         (response.cookies).should eq({"k1" => "v1", "k2" => "v2"})
         (JSON.parse(response.body)["cookies"]).should eq({"k1" => "v1", "k2" => "v2"})
         (JSON.parse(response.body)["headers"]["Cookie"]).should eq("k1=v1; k2=v2")
+      end
+
+      it "does not send response cookies to another host on redirect" do
+        response = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/cookies/set_redirect_other_host")
+
+        (JSON.parse(response.body)["cookies"]).should eq({} of String => String)
+      end
+
+      it "does not send response cookies outside their path on redirect" do
+        response = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/cookies/set_path_redirect")
+
+        (JSON.parse(response.body)["cookies"]).should eq({} of String => String)
+      end
+
+      it "does not send secure response cookies over HTTP on redirect" do
+        response = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/cookies/set_secure_redirect")
+
+        (JSON.parse(response.body)["cookies"]).should eq({} of String => String)
+      end
+
+      it "removes expired response cookies during a redirect chain" do
+        response = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/cookies/set_delete_redirect")
+
+        (JSON.parse(response.body)["cookies"]).should eq({} of String => String)
+      end
+
+      it "keeps explicit cookies on same-host redirects" do
+        response = Crest::Request.execute(
+          :get,
+          "#{TEST_SERVER_URL}/cookies/set_redirect",
+          cookies: {"session" => "explicit"}
+        )
+
+        (JSON.parse(response.body)["cookies"]).should eq({"session" => "explicit"})
+      end
+
+      it "should send cookies from a cookie jar and extract response cookies into it" do
+        jar = HTTP::CookieJar.new
+        jar.add(TEST_SERVER_URL, HTTP::Cookie.new("session", "persisted"))
+
+        response = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/cookies/set", params: {"k1" => "v1"}, cookie_jar: jar)
+
+        (response.status_code).should eq(200)
+        (jar.cookies_for(TEST_SERVER_URL).to_h["session"].value).should eq("persisted")
+        (jar.cookies_for("#{TEST_SERVER_URL}/cookies").to_h["k1"].value).should eq("v1")
+
+        echoed = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/get", cookie_jar: jar)
+        (JSON.parse(echoed.body)["cookies"]).should eq({"session" => "persisted"})
+      end
+
+      it "should let explicit request cookies override cookie jar cookies" do
+        jar = HTTP::CookieJar.new
+        jar.add(TEST_SERVER_URL, HTTP::Cookie.new("k1", "jar"))
+        jar.add(TEST_SERVER_URL, HTTP::Cookie.new("k2", "jar"))
+
+        response = Crest::Request.execute(
+          :get,
+          "#{TEST_SERVER_URL}/get",
+          cookies: {"k1" => "manual"},
+          cookie_jar: jar
+        )
+
+        (JSON.parse(response.body)["cookies"]).should eq({"k1" => "manual", "k2" => "jar"})
+        (jar.cookies_for(TEST_SERVER_URL).to_h["k1"].value).should eq("jar")
       end
     end
   end

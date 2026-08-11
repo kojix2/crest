@@ -33,7 +33,7 @@ describe Crest::Redirector do
         reader.gets.should match(/GET/)
         reader.gets.should match(/200/)
 
-        (response.request.logging).should eq(true)
+        (response.request.logging).should be_true
         (response.request.logger).should be_a(Crest::Logger)
       end
     end
@@ -75,7 +75,7 @@ describe Crest::Redirector do
 
       (response.url).should eq("#{TEST_SERVER_URL}/redirect/1")
       (response.status_code).should eq(302)
-      (response.body).should eq("Redirecting to /")
+      (response.body).should eq("")
     end
 
     it "should not raise exception in the block when handle_errors is false" do
@@ -86,8 +86,96 @@ describe Crest::Redirector do
         body = response.body_io.gets_to_end
       end
 
-      body.should eq("Redirecting to /")
+      body.should eq("")
       status_code.should eq(302)
+    end
+
+    it "preserves method and form body for 307 redirects" do
+      response = Crest.post("#{TEST_SERVER_URL}/redirect/307", {"title" => "Title"})
+      body = JSON.parse(response.body)
+
+      response.status_code.should eq(200)
+      body["method"].should eq("POST")
+      body["form"].should eq({"title" => "Title"})
+      response.history.first.status_code.should eq(307)
+    end
+
+    it "preserves method and form body for 308 redirects" do
+      response = Crest.post("#{TEST_SERVER_URL}/redirect/308", {"title" => "Title"})
+      body = JSON.parse(response.body)
+
+      response.status_code.should eq(200)
+      body["method"].should eq("POST")
+      body["form"].should eq({"title" => "Title"})
+      response.history.first.status_code.should eq(308)
+    end
+
+    it "preserves streamed multipart form body for 307 redirects" do
+      file = File.open("#{__DIR__}/../support/fff.png")
+      response = Crest.post("#{TEST_SERVER_URL}/redirect/upload_307", form: {:file => file}, stream_multipart: true)
+      body = response.body
+
+      body.should match(/Upload OK/)
+      file_path = body.gsub("Upload OK - ", "")
+      File.read(file_path).should eq(File.read(file.path))
+      response.history.first.status_code.should eq(307)
+    end
+
+    it "preserves streamed multipart form body for 308 redirects" do
+      file = File.open("#{__DIR__}/../support/fff.png")
+      response = Crest.post("#{TEST_SERVER_URL}/redirect/upload_308", form: {:file => file}, stream_multipart: true)
+      body = response.body
+
+      body.should match(/Upload OK/)
+      file_path = body.gsub("Upload OK - ", "")
+      File.read(file_path).should eq(File.read(file.path))
+      response.history.first.status_code.should eq(308)
+    end
+
+    it "rewrites POST to GET on 301 redirects" do
+      response = Crest.post("#{TEST_SERVER_URL}/redirect/301_post", {"title" => "Title"})
+      body = JSON.parse(response.body)
+
+      response.status_code.should eq(200)
+      body["method"].should eq("GET")
+      body["form"].should eq({} of String => String)
+      response.history.first.status_code.should eq(301)
+    end
+
+    it "preserves PUT on 301 redirects" do
+      response = Crest.put("#{TEST_SERVER_URL}/redirect/301_put", {"title" => "Title"})
+      body = JSON.parse(response.body)
+
+      response.status_code.should eq(200)
+      body["method"].should eq("PUT")
+      body["form"].should eq({"title" => "Title"})
+      response.history.first.status_code.should eq(301)
+    end
+
+    it "rewrites POST to GET on 302 redirects" do
+      response = Crest.post("#{TEST_SERVER_URL}/redirect/302_post", {"title" => "Title"})
+      body = JSON.parse(response.body)
+
+      response.status_code.should eq(200)
+      body["method"].should eq("GET")
+      body["form"].should eq({} of String => String)
+      response.history.first.status_code.should eq(302)
+    end
+
+    it "resolves relative redirect locations against the current request URL" do
+      response = Crest.get("#{TEST_SERVER_URL}/foo/redirect_relative")
+      body = JSON.parse(response.body)
+
+      response.status_code.should eq(200)
+      response.url.should eq("#{TEST_SERVER_URL}/foo/bar?via=relative")
+      body["path"].should eq("/foo/bar?via=relative")
+      response.history.first.status_code.should eq(302)
+    end
+
+    it "preserves read timeout across redirects" do
+      expect_raises IO::TimeoutError do
+        Crest.get("#{TEST_SERVER_URL}/redirect/delay", read_timeout: 1.second)
+      end
     end
   end
 

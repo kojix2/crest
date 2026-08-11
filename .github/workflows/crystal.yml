@@ -13,22 +13,17 @@ jobs:
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
       - name: Check out repository code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Check format
         run: crystal tool format --check
 
   check_ameba:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Crystal
-        uses: crystal-lang/install-crystal@v1
       - name: Check out repository code
-        uses: actions/checkout@v4
-      - name: Crystal Ameba Linter
-        id: crystal-ameba
-        uses: crystal-ameba/github-action@v0.9.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@v7
+      - name: Run Ameba linter
+        uses: crystal-ameba/github-action@master
 
   test:
     strategy:
@@ -39,6 +34,7 @@ jobs:
           - {os: ubuntu-latest, crystal: nightly}
           - {os: macos-latest}
           - {os: macos-14}
+          - {os: windows-latest}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Crystal
@@ -46,7 +42,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal }}
       - name: Check out repository code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install dependencies
         run: shards install --skip-postinstall --skip-executables
       - name: Run tests

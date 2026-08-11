@@ -15,6 +15,25 @@ describe Crest do
         (response.body).should eq("Authorized")
       end
 
+      it "should not accumulate authorization headers when reusing a request" do
+        request = Crest::Request.new(
+          :get,
+          "#{TEST_SERVER_URL}/get",
+          user: "username",
+          password: "password",
+          close_connection: false
+        )
+
+        request.execute
+        response = request.execute
+
+        authorization = "Basic #{Base64.strict_encode("username:password")}"
+        request.headers.get("Authorization").should eq([authorization])
+        JSON.parse(response.body)["headers"]["Authorization"].should eq(authorization)
+      ensure
+        request.try &.close
+      end
+
       it "should be successful in the initializer block" do
         request = Crest::Request.new(:get, "#{TEST_SERVER_URL}/secret") do |req|
           req.user = "username"
@@ -58,6 +77,14 @@ describe Crest do
         expect_raises Crest::RequestFailed, "HTTP status code 401" do
           Crest::Request.execute(:get, "#{TEST_SERVER_URL}/redirect_to_secret", user: "root", password: "qwerty")
         end
+      end
+
+      it "should not forward credentials on cross-origin redirect" do
+        response = Crest::Request.execute(:get, "#{TEST_SERVER_URL}/redirect_to_other_origin", user: "username", password: "password")
+
+        response.status_code.should eq(200)
+        response.body.should eq("")
+        response.url.should eq("#{ALT_TEST_SERVER_URL}/auth-header")
       end
     end
 
